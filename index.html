@@ -14,6 +14,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@500;700&display=swap">
 <script src="vendor/xlsx.full.min.js"></script>
+<script src="vendor/jsQR.js"></script>
 <style>
 /* Layout: one narrow column, thumb-reachable controls, the plant ID as the loudest thing on screen. */
 :root {
@@ -110,6 +111,16 @@ td.empty { color: var(--muted); }
 .toast { position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 999px; font-size: 0.92rem; max-width: calc(100% - 32px); z-index: 20; }
 .confirm { border: 1px solid var(--warn); background: var(--warn-soft); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-size: 0.8rem; background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+/* QR scanner */
+.scan-btn { flex: none; }
+.scanner { position: fixed; inset: 0; z-index: 30; background: #000; color: #fff; display: flex; flex-direction: column; }
+.scanner video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.scan-frame { position: absolute; left: 50%; top: 45%; width: min(70vw, 300px); aspect-ratio: 1; transform: translate(-50%, -50%); border-radius: 18px; box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.45); outline: 3px solid rgba(255, 255, 255, 0.9); }
+.scan-frame.hit { outline-color: #6cc58a; }
+.scan-ui { position: relative; margin-top: auto; padding: 16px; padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 12px; align-items: center; text-align: center; }
+.scan-msg { background: rgba(0, 0, 0, 0.65); border-radius: 12px; padding: 10px 14px; font-weight: 700; max-width: 100%; overflow-wrap: anywhere; }
+.scan-msg.warn { background: #6b3f00; }
+.scanner button { min-width: 160px; background: #fff; color: #000; border-color: #fff; }
 @media (prefers-reduced-motion: reduce) { .bar > i { transition: none; } }
 </style>
 </head>
@@ -204,6 +215,7 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
   <form id="jumpForm" class="row" style="flex-wrap:nowrap;">
     <input id="jumpInput" type="search" placeholder="Jump to ID…" aria-label="Jump to ID" autocomplete="off" enterkeyhint="go">
     <button type="submit" style="flex:none;">Go</button>
+    <button type="button" id="scanBtn" class="scan-btn primary" aria-label="Scan QR code">Scan</button>
   </form>
   <div id="jumpMsg" class="small" style="color:var(--warn)" hidden></div>
 
@@ -260,6 +272,15 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
     <textarea id="copyFallback" hidden readonly aria-label="Table as text"></textarea>
   </div>
 </section>
+
+<div id="scanner" class="scanner" hidden role="dialog" aria-label="Scan QR code">
+  <video id="scanVideo" playsinline muted autoplay></video>
+  <div id="scanFrame" class="scan-frame"></div>
+  <div class="scan-ui">
+    <div id="scanMsg" class="scan-msg" role="status">Point the camera at the code on the plate</div>
+    <button type="button" id="scanClose">Cancel</button>
+  </div>
+</div>
 
 <div id="toast" class="toast" hidden role="status"></div>
 
@@ -649,6 +670,138 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
   });
   $('toSetup').addEventListener('click', () => { saveNow(); renderSetup(); show('setup'); });
   $('toOverview').addEventListener('click', () => { saveNow(); openOverview('score'); });
+
+  // ---------- QR scanning ----------
+  // Match a scanned code to a row. Strict on purpose: a wrong plate is worse than no plate.
+  function findScanned(text) {
+    const t = text.trim().toLowerCase();
+    const ids = S.rows.map((_, r) => idOf(r).toLowerCase());
+    const exact = ids.indexOf(t);
+    if (exact >= 0) return exact;
+    // The code may carry more than the ID (a URL, "plate=P017;exp=12"): look for the ID as a whole token.
+    let best = -1, bestLen = 0, tie = false;
+    ids.forEach((id, r) => {
+      if (!id) return;
+      let from = 0, i;
+      while ((i = t.indexOf(id, from)) >= 0) {
+        const before = t[i - 1], after = t[i + id.length];
+        const edge = c => c === undefined || !/[a-z0-9]/.test(c);
+        if (edge(before) && edge(after)) {
+          if (id.length > bestLen) { best = r; bestLen = id.length; tie = false; }
+          else if (id.length === bestLen && ids[best] !== id) tie = true;
+          break;
+        }
+        from = i + 1;
+      }
+    });
+    return tie ? -1 : best;
+  }
+
+  let scanStream = null, scanTimer = null, detector = null, lastMiss = '', lastMissAt = 0;
+  const scanCanvas = document.createElement('canvas');
+  const scanCtx = scanCanvas.getContext('2d', { willReadFrequently: true });
+
+  function scanMessage(text, warn) {
+    $('scanMsg').textContent = text;
+    $('scanMsg').classList.toggle('warn', !!warn);
+  }
+
+  async function openScanner() {
+    $('jumpMsg').hidden = true;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      $('jumpMsg').textContent = 'This browser cannot use the camera here. Open the https version of the tool.';
+      $('jumpMsg').hidden = false;
+      return;
+    }
+    $('scanner').hidden = false;
+    $('scanFrame').classList.remove('hit');
+    scanMessage('Starting camera…');
+    try {
+      scanStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false
+      });
+    } catch (err) {
+      const name = err && err.name;
+      scanMessage(name === 'NotAllowedError'
+        ? 'Camera access is blocked. Allow the camera for this site in your browser settings.'
+        : name === 'NotFoundError' ? 'No camera found on this device.'
+        : 'Could not start the camera.', true);
+      return;
+    }
+    if ($('scanner').hidden) { stopCamera(); return; }   // closed while waiting for permission
+    const video = $('scanVideo');
+    video.srcObject = scanStream;
+    try { await video.play(); } catch (e) {}
+    detector = null;
+    if ('BarcodeDetector' in window) {
+      try {
+        const supported = await BarcodeDetector.getSupportedFormats();
+        const want = ['qr_code', 'data_matrix', 'code_128', 'code_39', 'ean_13'].filter(f => supported.includes(f));
+        if (want.length) detector = new BarcodeDetector({ formats: want });
+      } catch (e) { detector = null; }
+    }
+    if (!detector && !window.jsQR) { scanMessage('The QR reader did not load.', true); return; }
+    scanMessage('Point the camera at the code on the plate');
+    scanLoop();
+  }
+
+  async function readFrame(video) {
+    if (detector) {
+      const codes = await detector.detect(video);
+      return codes.length ? codes[0].rawValue : null;
+    }
+    const scale = Math.min(1, 640 / video.videoWidth);
+    const w = Math.round(video.videoWidth * scale), h = Math.round(video.videoHeight * scale);
+    if (!w || !h) return null;
+    scanCanvas.width = w; scanCanvas.height = h;
+    scanCtx.drawImage(video, 0, 0, w, h);
+    const img = scanCtx.getImageData(0, 0, w, h);
+    const code = jsQR(img.data, w, h, { inversionAttempts: 'attemptBoth' });
+    return code ? code.data : null;
+  }
+
+  async function scanLoop() {
+    if (!scanStream) return;
+    const video = $('scanVideo');
+    let text = null;
+    if (video.readyState >= 2) { try { text = await readFrame(video); } catch (e) {} }
+    if (!scanStream) return;
+    if (text && text.trim()) {
+      const r = findScanned(text);
+      if (r >= 0) { scanHit(r); return; }
+      const now = Date.now();
+      if (text !== lastMiss || now - lastMissAt > 2000) {
+        scanMessage('"' + text.trim().slice(0, 60) + '" is not in this list', true);
+        if (navigator.vibrate) navigator.vibrate([40, 60, 40]);
+      }
+      lastMiss = text; lastMissAt = now;
+    }
+    scanTimer = setTimeout(scanLoop, 120);
+  }
+
+  function scanHit(r) {
+    $('scanFrame').classList.add('hit');
+    if (navigator.vibrate) navigator.vibrate(60);
+    stopCamera();
+    setTimeout(() => {
+      $('scanner').hidden = true;
+      S.pos = r; save(); renderScore(true);
+      toast('Scanned ' + idOf(r) + (rowDone(r) ? ' · already scored' : ''));
+    }, 180);
+  }
+
+  function stopCamera() {
+    clearTimeout(scanTimer); scanTimer = null;
+    if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
+    $('scanVideo').srcObject = null;
+  }
+  function closeScanner() { stopCamera(); $('scanner').hidden = true; }
+
+  $('scanBtn').addEventListener('click', openScanner);
+  $('scanClose').addEventListener('click', closeScanner);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('scanner').hidden) closeScanner(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden && !$('scanner').hidden) closeScanner(); });
 
   $('jumpForm').addEventListener('submit', e => {
     e.preventDefault();

@@ -1,12 +1,13 @@
 // Offline support: serve from cache first, refresh the cache in the background.
 // Bump VERSION when files are added or removed.
-const VERSION = 'v1';
+const VERSION = 'v2';
 const CACHE = 'chamber-scoring-' + VERSION;
 const FILES = [
   './',
   'index.html',
   'manifest.webmanifest',
   'vendor/xlsx.full.min.js',
+  'vendor/jsQR.js',
   'icons/icon-192.png',
   'icons/icon-512.png',
   'icons/apple-touch-icon.png'

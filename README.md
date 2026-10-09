@@ -5,6 +5,8 @@ A phone-friendly web tool for scoring plants in growth chambers. Load a spreadsh
 name the columns you want to measure, then enter values plant by plant. Export the
 filled sheet as .xlsx or .csv when you are done.
 
+- Tap **Scan** to read the QR code on a plate and jump straight to it. The code may hold just
+  the ID (`P017`) or more text that contains it (`plate=P017;exp=12`, a URL).
 - Everything runs in the browser; no data leaves the phone.
 - Entries are saved in the browser as you type, so closing the page loses nothing.
 - Works offline after the first visit, and can be added to the home screen.
