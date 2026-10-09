@@ -1,6 +1,6 @@
 // Offline support: serve from cache first, refresh the cache in the background.
 // Bump VERSION when files are added or removed.
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = 'chamber-scoring-' + VERSION;
 const FILES = [
   './',

@@ -111,6 +111,15 @@ td.empty { color: var(--muted); }
 .toast { position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 999px; font-size: 0.92rem; max-width: calc(100% - 32px); z-index: 20; }
 .confirm { border: 1px solid var(--warn); background: var(--warn-soft); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-size: 0.8rem; background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+/* photos */
+.thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 8px; }
+.thumb { padding: 0; min-height: 0; aspect-ratio: 1; overflow: hidden; border-radius: 8px; background: var(--line); }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.viewer { position: fixed; inset: 0; z-index: 30; background: #000; color: #fff; display: flex; flex-direction: column; }
+.viewer img { flex: 1; min-height: 0; width: 100%; object-fit: contain; }
+.viewer-bar { padding: 12px 16px; padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 10px; align-items: center; text-align: center; }
+.viewer-bar .row { justify-content: center; }
+
 /* QR scanner */
 .scan-btn { flex: none; }
 .scanner { position: fixed; inset: 0; z-index: 30; background: #000; color: #fff; display: flex; flex-direction: column; }
@@ -192,7 +201,7 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
       <button id="clearBtn">Clear entered values</button>
     </div>
     <div id="clearConfirm" class="confirm" hidden>
-      <span>Delete all <b id="clearCount">0</b> entered values? This cannot be undone.</span>
+      <span id="clearText">Delete all entered values? This cannot be undone.</span>
       <div class="row">
         <button id="clearYes" class="primary">Delete values</button>
         <button id="clearNo">Keep them</button>
@@ -240,6 +249,23 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
       <span id="saveState" class="muted small">Saved on this phone</span>
     </div>
   </form>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between;">
+      <span class="label">Photos</span>
+      <span id="photoCount" class="muted small"></span>
+    </div>
+    <div id="photoStrip" class="thumbs" hidden></div>
+    <div class="row">
+      <label class="btn file-btn grow">Take photo
+        <input id="photoCapture" type="file" accept="image/*" capture="environment">
+      </label>
+      <label class="btn file-btn grow">From library
+        <input id="photoPick" type="file" accept="image/*" multiple>
+      </label>
+    </div>
+    <div id="photoMsg" class="small" hidden></div>
+  </div>
 </section>
 
 <!-- ============ OVERVIEW ============ -->
@@ -268,6 +294,10 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
       <button id="saveCsv">Save .csv</button>
       <button id="copyTsv">Copy for Excel</button>
     </div>
+    <div id="photoExport" class="row" hidden>
+      <button id="savePhotos">Save photos (.zip)</button>
+      <span id="photoTotal" class="muted small"></span>
+    </div>
     <div id="exportMsg" class="small muted" hidden></div>
     <textarea id="copyFallback" hidden readonly aria-label="Table as text"></textarea>
   </div>
@@ -279,6 +309,22 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
   <div class="scan-ui">
     <div id="scanMsg" class="scan-msg" role="status">Point the camera at the code on the plate</div>
     <button type="button" id="scanClose">Cancel</button>
+  </div>
+</div>
+
+<div id="viewer" class="viewer" hidden role="dialog" aria-label="Photo">
+  <img id="viewerImg" alt="">
+  <div class="viewer-bar">
+    <span id="viewerName" class="mono small"></span>
+    <div id="viewerActions" class="row">
+      <button type="button" id="viewerDelete">Delete</button>
+      <button type="button" id="viewerClose" class="primary">Close</button>
+    </div>
+    <div id="viewerConfirm" class="row" hidden>
+      <span>Delete this photo?</span>
+      <button type="button" id="viewerYes">Delete photo</button>
+      <button type="button" id="viewerNo">Keep it</button>
+    </div>
   </div>
 </div>
 
@@ -322,10 +368,11 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
   function load() {
     try {
       const raw = localStorage.getItem(STORE_KEY);
-      if (raw) { const s = JSON.parse(raw); if (s && Array.isArray(s.rows)) return s; }
+      if (raw) { const s = JSON.parse(raw); if (s && Array.isArray(s.rows)) { s.sid ||= newSid(); return s; } }
     } catch (e) {}
-    return exampleSession();
+    const ex = exampleSession(); ex.sid = newSid(); return ex;
   }
+  function newSid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
   function saveNow() {
     clearTimeout(saveTimer); saveTimer = null;
     try {
@@ -428,9 +475,10 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
       headers: table.headers, rows: table.rows, idCol,
       contextCols: table.headers.map((_, i) => i).filter(i => i !== idCol).slice(0, 3),
       params: keepParams.length ? keepParams : [{ name: '', type: 'number' }],
-      values: {}, times: {}, recordTime: S ? !!S.recordTime : false, pos: 0
+      values: {}, times: {}, recordTime: S ? !!S.recordTime : false, pos: 0, sid: newSid()
     };
     saveNow();
+    purgeOtherPhotos();
   }
 
   $('fileInput').addEventListener('change', async e => {
@@ -476,8 +524,9 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
     $('fileName').textContent = S.fileName;
     $('fileMeta').textContent = S.rows.length + ' rows · ' + S.headers.length + ' columns' + (S.sheetName ? ' · sheet "' + S.sheetName + '"' : '');
     const entered = countEntered();
-    $('replaceWarn').hidden = S.example || entered === 0;
-    $('replaceWarn').textContent = 'Loading another file replaces the ' + entered + ' values entered so far. Export them first.';
+    const nPhotos = sessionPhotos().length;
+    $('replaceWarn').hidden = entered === 0 && nPhotos === 0;
+    $('replaceWarn').textContent = 'Loading another file replaces the ' + countPhrase(entered, nPhotos) + ' entered so far. Export first.';
     $('resumeBtn').hidden = !(S.params.some(p => p.name.trim()) && (entered > 0 || S.pos > 0));
 
     const sr = $('sheetRow'), ss = $('sheetSelect');
@@ -566,10 +615,18 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
     $('setupError').textContent = err; $('setupError').hidden = !err;
     if (!err) openOverview('setup');
   });
-  $('clearBtn').addEventListener('click', () => { $('clearCount').textContent = countEntered(); $('clearConfirm').hidden = false; });
+  function countPhrase(values, nPhotos) {
+    const v = values + (values === 1 ? ' value' : ' values');
+    return nPhotos ? v + ' and ' + nPhotos + (nPhotos === 1 ? ' photo' : ' photos') : v;
+  }
+  $('clearBtn').addEventListener('click', () => {
+    $('clearText').textContent = 'Delete all ' + countPhrase(countEntered(), sessionPhotos().length) + '? This cannot be undone.';
+    $('clearConfirm').hidden = false;
+  });
   $('clearNo').addEventListener('click', () => { $('clearConfirm').hidden = true; });
   $('clearYes').addEventListener('click', () => {
-    S.values = {}; S.times = {}; S.pos = 0; saveNow(); renderSetup(); toast('Values cleared');
+    S.values = {}; S.times = {}; S.pos = 0; S.sid = newSid(); saveNow();
+    purgeOtherPhotos().then(renderSetup); toast('Values and photos cleared');
   });
 
   // ---------- scoring screen ----------
@@ -619,6 +676,7 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
       f.append(lab, inp, hint);
       box.append(f);
     });
+    renderPhotos();
     $('prevBtn').disabled = r === 0;
     $('nextBtn').textContent = r === n - 1 ? 'Finish →' : 'Next →';
     $('jumpMsg').hidden = true;
@@ -866,7 +924,8 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
     const only = $('onlyMissing').checked;
     const t = $('ovTable'); t.replaceChildren();
     const thead = t.createTHead().insertRow();
-    for (const h of [S.headers[S.idCol], ...S.params.map(p => p.name)]) {
+    const withPhotos = sessionPhotos().length > 0;
+    for (const h of [S.headers[S.idCol], ...S.params.map(p => p.name), ...(withPhotos ? ['Photos'] : [])]) {
       const th = document.createElement('th'); th.textContent = h; thead.append(th);
     }
     const tb = t.createTBody();
@@ -880,14 +939,21 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
         td.className = 'mono' + (v.trim() ? '' : ' empty');
         td.textContent = v.trim() ? v : '—';
       }
+      if (withPhotos) {
+        const k = photosOf(idOf(r)).length, td = tr.insertCell();
+        td.className = 'mono' + (k ? '' : ' empty'); td.textContent = k ? String(k) : '—';
+      }
       const open = () => { S.pos = r; save(); show('score'); renderScore(true); };
       tr.addEventListener('click', open);
       tr.addEventListener('keydown', e => { if (e.key === 'Enter') open(); });
     }
     if (!tb.rows.length) {
-      const td = tb.insertRow().insertCell(); td.colSpan = S.params.length + 1; td.className = 'empty';
+      const td = tb.insertRow().insertCell(); td.colSpan = S.params.length + 1 + (withPhotos ? 1 : 0); td.className = 'empty';
       td.textContent = 'Every plant is scored.';
     }
+    const all = sessionPhotos();
+    $('photoExport').hidden = !all.length;
+    $('photoTotal').textContent = all.length + (all.length === 1 ? ' photo · ' : ' photos · ') + formatMB(all.reduce((a, p) => a + p.size, 0));
     $('exportMsg').hidden = true; $('copyFallback').hidden = true;
   }
 
@@ -902,6 +968,8 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
     }
     let tCol = -1;
     if (S.recordTime) { tCol = headers.indexOf('scored_at'); if (tCol < 0) { headers.push('scored_at'); tCol = headers.length - 1; } }
+    let pCol = -1;
+    if (sessionPhotos().length) { pCol = headers.indexOf('photos'); if (pCol < 0) { headers.push('photos'); pCol = headers.length - 1; } }
     const out = [headers];
     S.rows.forEach((row, r) => {
       const line = headers.map((_, i) => row[i] ?? '');
@@ -915,6 +983,7 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
         line[colOf[p.name]] = cell;
       }
       if (tCol >= 0) line[tCol] = S.times[r] ? new Date(S.times[r]).toLocaleString('sv-SE') : '';
+      if (pCol >= 0) line[pCol] = photosOf(idOf(r)).map(p => p.name).join('; ');
       out.push(line);
     });
     return out;
@@ -973,6 +1042,208 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
     } catch (e) { fallback(); }
   });
 
+  // ---------- photos ----------
+  // Photos live in IndexedDB, tagged with the session id so a new spreadsheet never shows old photos.
+  const PHOTO_MAX = 2000, THUMB_MAX = 240;
+  let photoDb = null, photos = [];   // photos: metadata only {id, sid, plant, name, takenAt, size, crc}
+  const idbReq = req => new Promise((res, rej) => { req.onsuccess = () => res(req.result); req.onerror = () => rej(req.error); });
+  async function openPhotoDb() {
+    if (photoDb) return photoDb;
+    const req = indexedDB.open('chamber-scoring-photos', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('photos', { keyPath: 'id', autoIncrement: true });
+    photoDb = await idbReq(req);
+    return photoDb;
+  }
+  const photoStore = mode => photoDb.transaction('photos', mode).objectStore('photos');
+  const sessionPhotos = () => photos.filter(p => p.sid === S.sid);
+  const photosOf = plant => photos.filter(p => p.sid === S.sid && p.plant === plant);
+  const formatMB = bytes => (bytes / 1048576).toFixed(bytes < 10485760 ? 1 : 0) + ' MB';
+
+  async function loadPhotoIndex() {
+    try {
+      await openPhotoDb();
+      const all = await idbReq(photoStore('readonly').getAll());
+      photos = all.map(({ id, sid, plant, name, takenAt, size, crc }) => ({ id, sid, plant, name, takenAt, size, crc }));
+    } catch (e) { photos = []; }
+  }
+  async function purgeOtherPhotos() {
+    const old = photos.filter(p => p.sid !== S.sid);
+    photos = photos.filter(p => p.sid === S.sid);
+    if (!old.length) return;
+    try { await openPhotoDb(); const st = photoStore('readwrite'); for (const p of old) st.delete(p.id); } catch (e) {}
+  }
+
+  const CRC_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+    return t;
+  })();
+  function crc32(bytes) {
+    let c = 0xFFFFFFFF;
+    for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  function loadImage(file) {
+    return new Promise((res, rej) => {
+      const url = URL.createObjectURL(file), img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); res(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('unreadable image')); };
+      img.src = url;
+    });
+  }
+  function shrink(img, max, quality) {
+    const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const w = Math.round(img.naturalWidth * k), h = Math.round(img.naturalHeight * k);
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    c.getContext('2d').drawImage(img, 0, 0, w, h);
+    return new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('encode failed')), 'image/jpeg', quality));
+  }
+  function photoName(plant, date) {
+    const safe = plant.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'plant';
+    const p2 = n => String(n).padStart(2, '0');
+    const stamp = date.getFullYear() + '-' + p2(date.getMonth() + 1) + '-' + p2(date.getDate()) + '_' + p2(date.getHours()) + p2(date.getMinutes());
+    const taken = new Set(sessionPhotos().map(p => p.name));
+    let n = 1, name;
+    do { name = safe + '_' + stamp + '_' + n + '.jpg'; n++; } while (taken.has(name));
+    return name;
+  }
+  function photoMessage(text, warn) {
+    const m = $('photoMsg'); m.textContent = text; m.hidden = !text;
+    m.style.color = warn ? 'var(--warn)' : 'var(--muted)';
+  }
+
+  async function addPhotos(fileList) {
+    const files = [...fileList];
+    if (!files.length) return;
+    const r = S.pos, plant = idOf(r);
+    try { await openPhotoDb(); }
+    catch (e) { photoMessage('This browser cannot store photos here (private browsing?).', true); return; }
+    photoMessage(files.length > 1 ? 'Saving ' + files.length + ' photos…' : 'Saving photo…');
+    let saved = 0, failed = 0;
+    for (const f of files) {
+      try {
+        const img = await loadImage(f);
+        const blob = await shrink(img, PHOTO_MAX, 0.85);
+        const thumb = await shrink(img, THUMB_MAX, 0.7);
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        const when = new Date(f.lastModified || Date.now());
+        const rec = { sid: S.sid, plant, name: photoName(plant, when), takenAt: when.toISOString(), size: bytes.length, crc: crc32(bytes), blob, thumb };
+        rec.id = await idbReq(photoStore('readwrite').add(rec));
+        photos.push({ id: rec.id, sid: rec.sid, plant, name: rec.name, takenAt: rec.takenAt, size: rec.size, crc: rec.crc });
+        saved++;
+      } catch (e) { failed++; }
+    }
+    try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
+    if (idOf(S.pos) === plant) renderPhotos();   // clears the message, so set it afterwards
+    if (failed) photoMessage(failed + (failed === 1 ? ' photo' : ' photos') + ' could not be saved. The phone may be out of storage.', true);
+    else photoMessage('');
+    if (saved) toast((saved === 1 ? 'Photo' : saved + ' photos') + ' saved for ' + plant);
+  }
+  $('photoCapture').addEventListener('change', e => { const f = e.target.files; addPhotos(f).finally(() => { e.target.value = ''; }); });
+  $('photoPick').addEventListener('change', e => { const f = e.target.files; addPhotos(f).finally(() => { e.target.value = ''; }); });
+
+  let thumbUrls = [], photoRender = 0;
+  async function renderPhotos() {
+    const token = ++photoRender;
+    thumbUrls.forEach(u => URL.revokeObjectURL(u)); thumbUrls = [];
+    const list = photosOf(idOf(S.pos));
+    $('photoCount').textContent = list.length ? list.length + (list.length === 1 ? ' photo' : ' photos') : 'None yet';
+    const strip = $('photoStrip'); strip.replaceChildren(); strip.hidden = !list.length;
+    photoMessage('');
+    if (!list.length || !photoDb) return;
+    const buttons = list.map(p => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'thumb'; b.setAttribute('aria-label', 'Open photo ' + p.name);
+      b.addEventListener('click', () => openViewer(p));
+      strip.append(b);
+      return b;
+    });
+    for (let i = 0; i < list.length; i++) {
+      let rec = null;
+      try { rec = await idbReq(photoStore('readonly').get(list[i].id)); } catch (e) {}
+      if (token !== photoRender) return;
+      if (!rec) continue;
+      const u = URL.createObjectURL(rec.thumb); thumbUrls.push(u);
+      const im = new Image(); im.alt = ''; im.src = u; buttons[i].append(im);
+    }
+  }
+
+  let viewerUrl = null, viewerPhoto = null;
+  async function openViewer(p) {
+    let rec = null;
+    try { rec = await idbReq(photoStore('readonly').get(p.id)); } catch (e) {}
+    if (!rec) { toast('This photo is no longer stored'); return; }
+    viewerPhoto = p;
+    viewerUrl = URL.createObjectURL(rec.blob);
+    $('viewerImg').src = viewerUrl;
+    $('viewerName').textContent = p.name;
+    $('viewerActions').hidden = false; $('viewerConfirm').hidden = true;
+    $('viewer').hidden = false;
+  }
+  function closeViewer() {
+    $('viewer').hidden = true; $('viewerImg').removeAttribute('src');
+    if (viewerUrl) URL.revokeObjectURL(viewerUrl);
+    viewerUrl = null; viewerPhoto = null;
+  }
+  $('viewerClose').addEventListener('click', closeViewer);
+  $('viewerDelete').addEventListener('click', () => { $('viewerActions').hidden = true; $('viewerConfirm').hidden = false; });
+  $('viewerNo').addEventListener('click', () => { $('viewerActions').hidden = false; $('viewerConfirm').hidden = true; });
+  $('viewerYes').addEventListener('click', async () => {
+    const p = viewerPhoto;
+    closeViewer();
+    if (!p) return;
+    try { await idbReq(photoStore('readwrite').delete(p.id)); } catch (e) { toast('Could not delete the photo'); return; }
+    photos = photos.filter(x => x.id !== p.id);
+    renderPhotos(); toast('Photo deleted');
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('viewer').hidden) closeViewer(); });
+
+  // Zip without compression (JPEGs do not shrink further). CRCs were computed when each photo was saved.
+  async function buildPhotoZip(list) {
+    const enc = new TextEncoder(), parts = [], central = [];
+    let offset = 0, count = 0;
+    for (const p of list) {
+      let rec = null;
+      try { rec = await idbReq(photoStore('readonly').get(p.id)); } catch (e) {}
+      if (!rec) continue;
+      const name = enc.encode(p.name), d = new Date(p.takenAt);
+      const time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+      const date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+      const local = new DataView(new ArrayBuffer(30));
+      local.setUint32(0, 0x04034b50, true); local.setUint16(4, 20, true); local.setUint16(6, 0x0800, true);
+      local.setUint16(8, 0, true); local.setUint16(10, time, true); local.setUint16(12, date, true);
+      local.setUint32(14, p.crc, true); local.setUint32(18, p.size, true); local.setUint32(22, p.size, true);
+      local.setUint16(26, name.length, true); local.setUint16(28, 0, true);
+      parts.push(local.buffer, name, rec.blob);
+      const cd = new DataView(new ArrayBuffer(46));
+      cd.setUint32(0, 0x02014b50, true); cd.setUint16(4, 20, true); cd.setUint16(6, 20, true); cd.setUint16(8, 0x0800, true);
+      cd.setUint16(10, 0, true); cd.setUint16(12, time, true); cd.setUint16(14, date, true);
+      cd.setUint32(16, p.crc, true); cd.setUint32(20, p.size, true); cd.setUint32(24, p.size, true);
+      cd.setUint16(28, name.length, true); cd.setUint32(38, 0, true); cd.setUint32(42, offset, true);
+      central.push(cd.buffer, name);
+      offset += 30 + name.length + p.size;
+      count++;
+    }
+    const cdSize = central.reduce((a, b) => a + b.byteLength, 0);
+    const end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 0x06054b50, true); end.setUint16(8, count, true); end.setUint16(10, count, true);
+    end.setUint32(12, cdSize, true); end.setUint32(16, offset, true);
+    return { blob: new Blob([...parts, ...central, end.buffer], { type: 'application/zip' }), count };
+  }
+  $('savePhotos').addEventListener('click', async () => {
+    const list = sessionPhotos();
+    if (!list.length) return;
+    const btn = $('savePhotos'); btn.disabled = true; exportMsg('Packing ' + list.length + ' photos…');
+    try {
+      const { blob, count } = await buildPhotoZip(list);
+      if (!count) { exportMsg('No photos could be read from storage.', true); return; }
+      offerFile(baseName() + '_photos.zip', blob);
+    } catch (e) {
+      exportMsg('Could not pack the photos.', true);
+    } finally { btn.disabled = false; }
+  });
+
   // ---------- screen wake lock ----------
   let wakeLock = null;
   async function requestWakeLock() {
@@ -987,8 +1258,14 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
 
   // ---------- boot ----------
   S = load();
+  saveNow();   // keeps a newly assigned session id
   renderSetup();
   if (!S.example && S.params.every(p => p.name.trim()) && (countEntered() > 0 || S.pos > 0)) { show('score'); renderScore(false); }
+  loadPhotoIndex().then(() => {
+    purgeOtherPhotos();
+    if (!$('score').hidden) renderPhotos();
+    if (!$('setup').hidden) renderSetup();
+  });
 })();
 </script>
 </body>
