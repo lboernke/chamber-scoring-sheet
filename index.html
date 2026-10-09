@@ -115,7 +115,7 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
 .scan-btn { flex: none; }
 .scanner { position: fixed; inset: 0; z-index: 30; background: #000; color: #fff; display: flex; flex-direction: column; }
 .scanner video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.scan-frame { position: absolute; left: 50%; top: 45%; width: min(70vw, 300px); aspect-ratio: 1; transform: translate(-50%, -50%); border-radius: 18px; box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.45); outline: 3px solid rgba(255, 255, 255, 0.9); }
+.scan-frame { position: absolute; left: 50%; top: 50%; width: min(70vw, 300px); aspect-ratio: 1; transform: translate(-50%, -50%); border-radius: 18px; box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.45); outline: 3px solid rgba(255, 255, 255, 0.9); }
 .scan-frame.hit { outline-color: #6cc58a; }
 .scan-ui { position: relative; margin-top: auto; padding: 16px; padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 12px; align-items: center; text-align: center; }
 .scan-msg { background: rgba(0, 0, 0, 0.65); border-radius: 12px; padding: 10px 14px; font-weight: 700; max-width: 100%; overflow-wrap: anywhere; }
@@ -697,9 +697,37 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
     return tie ? -1 : best;
   }
 
-  let scanStream = null, scanTimer = null, detector = null, lastMiss = '', lastMissAt = 0;
+  let scanStream = null, scanTimer = null, detector = null, lastMiss = '', lastMissAt = 0, frameNo = 0;
+  const DECODE_SIZE = 360;   // px; the centre square is scaled to this before decoding
   const scanCanvas = document.createElement('canvas');
+  scanCanvas.width = scanCanvas.height = DECODE_SIZE;
   const scanCtx = scanCanvas.getContext('2d', { willReadFrequently: true });
+
+  // jsQR runs in a worker when possible; falls back to the main thread.
+  let qrWorker = null, qrWorkerFailed = false, qrJobId = 0;
+  const qrJobs = new Map();
+  function getWorker() {
+    if (qrWorker || qrWorkerFailed) return qrWorker;
+    try {
+      qrWorker = new Worker('qr-worker.js');
+      qrWorker.onmessage = e => { const job = qrJobs.get(e.data.id); if (job) { qrJobs.delete(e.data.id); job(e.data.text); } };
+      qrWorker.onerror = () => { qrWorkerFailed = true; qrWorker = null; qrJobs.forEach(job => job(null)); qrJobs.clear(); };
+    } catch (e) { qrWorkerFailed = true; qrWorker = null; }
+    return qrWorker;
+  }
+  function decodeImage(img, invert) {
+    const worker = getWorker();
+    if (!worker) {
+      if (!window.jsQR) return Promise.resolve(null);
+      const code = jsQR(img.data, img.width, img.height, { inversionAttempts: invert ? 'onlyInvert' : 'dontInvert' });
+      return Promise.resolve(code ? code.data : null);
+    }
+    return new Promise(resolve => {
+      const id = ++qrJobId;
+      qrJobs.set(id, resolve);
+      worker.postMessage({ id, buf: img.data.buffer, w: img.width, h: img.height, invert }, [img.data.buffer]);
+    });
+  }
 
   function scanMessage(text, warn) {
     $('scanMsg').textContent = text;
@@ -733,6 +761,7 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
     const video = $('scanVideo');
     video.srcObject = scanStream;
     try { await video.play(); } catch (e) {}
+    try { await scanStream.getVideoTracks()[0].applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (e) {}
     detector = null;
     if ('BarcodeDetector' in window) {
       try {
@@ -742,6 +771,8 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
       } catch (e) { detector = null; }
     }
     if (!detector && !window.jsQR) { scanMessage('The QR reader did not load.', true); return; }
+    if (!detector) getWorker();
+    frameNo = 0;
     scanMessage('Point the camera at the code on the plate');
     scanLoop();
   }
@@ -751,14 +782,14 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
       const codes = await detector.detect(video);
       return codes.length ? codes[0].rawValue : null;
     }
-    const scale = Math.min(1, 640 / video.videoWidth);
-    const w = Math.round(video.videoWidth * scale), h = Math.round(video.videoHeight * scale);
-    if (!w || !h) return null;
-    scanCanvas.width = w; scanCanvas.height = h;
-    scanCtx.drawImage(video, 0, 0, w, h);
-    const img = scanCtx.getImageData(0, 0, w, h);
-    const code = jsQR(img.data, w, h, { inversionAttempts: 'attemptBoth' });
-    return code ? code.data : null;
+    // Decode only the centre square (what sits inside the on-screen frame).
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh) return null;
+    const side = Math.round(Math.min(vw, vh) * 0.75);
+    scanCtx.drawImage(video, (vw - side) / 2, (vh - side) / 2, side, side, 0, 0, DECODE_SIZE, DECODE_SIZE);
+    const img = scanCtx.getImageData(0, 0, DECODE_SIZE, DECODE_SIZE);
+    // Labels are dark on light; try white-on-dark only every sixth frame.
+    return decodeImage(img, ++frameNo % 6 === 0);
   }
 
   async function scanLoop() {
@@ -777,7 +808,7 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
       }
       lastMiss = text; lastMissAt = now;
     }
-    scanTimer = setTimeout(scanLoop, 120);
+    scanTimer = requestAnimationFrame(scanLoop);
   }
 
   function scanHit(r) {
@@ -788,11 +819,11 @@ textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-s
       $('scanner').hidden = true;
       S.pos = r; save(); renderScore(true);
       toast('Scanned ' + idOf(r) + (rowDone(r) ? ' · already scored' : ''));
-    }, 180);
+    }, 100);
   }
 
   function stopCamera() {
-    clearTimeout(scanTimer); scanTimer = null;
+    cancelAnimationFrame(scanTimer); scanTimer = null;
     if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
     $('scanVideo').srcObject = null;
   }
