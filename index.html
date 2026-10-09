@@ -1,0 +1,811 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#23683b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Chamber Scoring Sheet</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-title" content="Scoring">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<script src="vendor/xlsx.full.min.js"></script>
+<style>
+/* Layout: one narrow column, thumb-reachable controls, the plant ID as the loudest thing on screen. */
+:root {
+  --bg: #eef2ee;
+  --surface: #ffffff;
+  --fg: #142019;
+  --muted: #56655b;
+  --line: #cfd9d1;
+  --accent: #23683b;
+  --accent-fg: #ffffff;
+  --accent-soft: #dcebdf;
+  --warn: #9a5a00;
+  --warn-soft: #fbedd6;
+  --done: #23683b;
+  --font-body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-data: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1511; --surface: #17211b; --fg: #e6eee8; --muted: #9db0a3; --line: #2c3a31;
+    --accent: #6cc58a; --accent-fg: #08130c; --accent-soft: #1d3326; --warn: #f0b45a; --warn-soft: #3a2a12; --done: #6cc58a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1511; --surface: #17211b; --fg: #e6eee8; --muted: #9db0a3; --line: #2c3a31;
+  --accent: #6cc58a; --accent-fg: #08130c; --accent-soft: #1d3326; --warn: #f0b45a; --warn-soft: #3a2a12; --done: #6cc58a;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+body { margin: 0; }
+[hidden] { display: none !important; }
+html, body { background: var(--bg); color: var(--fg); }
+body { font-family: var(--font-body); font-size: 17px; line-height: 1.45; }
+.wrap { max-width: 560px; margin: 0 auto; padding-inline: 16px; padding-block: 12px 40px; display: flex; flex-direction: column; gap: 16px; }
+h1, h2 { text-wrap: balance; margin: 0; line-height: 1.2; }
+h1 { font-size: 1.15rem; }
+h2 { font-size: 1rem; }
+.label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 700; }
+.muted { color: var(--muted); }
+.small { font-size: 0.85rem; }
+.mono { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.row > .grow { flex: 1 1 140px; min-width: 0; }
+
+button, .btn { font: inherit; font-weight: 700; border-radius: var(--radius); border: 1px solid var(--line); background: var(--surface); color: var(--fg); padding: 10px 14px; min-height: 44px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; text-decoration: none; }
+button:focus-visible, input:focus-visible, select:focus-visible, .btn:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+button.ghost { background: transparent; border-color: transparent; color: var(--accent); padding-inline: 8px; }
+button:disabled { opacity: 0.45; cursor: default; }
+input, select { font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-height: 44px; width: 100%; min-width: 0; }
+input[type="checkbox"] { width: 22px; height: 22px; min-height: 0; accent-color: var(--accent); margin: 0; }
+.file-btn { position: relative; overflow: hidden; }
+.file-btn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+.banner { background: var(--warn-soft); color: var(--fg); border: 1px solid var(--warn); border-radius: var(--radius); padding: 10px 14px; font-size: 0.92rem; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; background: var(--surface); font-size: 0.92rem; cursor: pointer; }
+.chip:has(input:checked) { background: var(--accent-soft); border-color: var(--accent); }
+.param { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; }
+.param select { width: auto; }
+.icon-btn { padding: 8px 12px; min-width: 44px; }
+
+/* scoring screen */
+.topbar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); padding-block: 8px; display: flex; flex-direction: column; gap: 8px; }
+.bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--accent); width: 0; transition: width 0.2s; }
+.plant-id { font-family: var(--font-data); font-weight: 700; font-size: clamp(2.2rem, 11vw, 3.4rem); line-height: 1.05; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.status-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; font-weight: 700; border-radius: 999px; padding: 3px 10px; background: var(--line); color: var(--muted); }
+.status-pill.done { background: var(--accent-soft); color: var(--done); }
+.context { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
+.context dt { color: var(--muted); font-size: 0.9rem; }
+.context dd { margin: 0; font-weight: 700; overflow-wrap: anywhere; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label { font-weight: 700; }
+.field input { font-family: var(--font-data); font-size: 1.6rem; padding: 12px 14px; min-height: 60px; }
+.field.bad input { border-color: var(--warn); }
+.field .hint { font-size: 0.82rem; color: var(--warn); min-height: 1.1em; }
+.nav { display: grid; grid-template-columns: 1fr auto 1.4fr; gap: 8px; }
+.nav button { min-height: 56px; font-size: 1.05rem; }
+
+/* overview */
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); position: sticky; top: 0; background: var(--surface); }
+tbody tr { cursor: pointer; }
+tbody tr:hover, tbody tr:focus-visible { background: var(--accent-soft); outline: none; }
+tr.current td:first-child { box-shadow: inset 4px 0 0 var(--accent); }
+td.empty { color: var(--muted); }
+.toast { position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 999px; font-size: 0.92rem; max-width: calc(100% - 32px); z-index: 20; }
+.confirm { border: 1px solid var(--warn); background: var(--warn-soft); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+textarea { width: 100%; min-height: 120px; font-family: var(--font-data); font-size: 0.8rem; background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+@media (prefers-reduced-motion: reduce) { .bar > i { transition: none; } }
+</style>
+</head>
+<body>
+
+<!-- ============ SETUP ============ -->
+<section id="setup" class="wrap">
+  <header class="row" style="justify-content: space-between;">
+    <h1>Chamber Scoring Sheet</h1>
+    <button id="resumeBtn" class="primary" hidden>Back to scoring</button>
+  </header>
+
+  <div id="exampleBanner" class="banner" hidden>
+    You are looking at example plants. Load your own spreadsheet to replace them.
+  </div>
+
+  <div class="card">
+    <span class="label">1 · Spreadsheet</span>
+    <div class="row">
+      <div class="grow">
+        <div id="fileName" class="mono" style="font-weight:700; overflow-wrap:anywhere;"></div>
+        <div id="fileMeta" class="muted small"></div>
+      </div>
+      <label class="btn file-btn primary" style="background:var(--accent);border-color:var(--accent);color:var(--accent-fg);">
+        Load file
+        <input id="fileInput" type="file" accept=".xlsx,.xls,.xlsm,.ods,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv">
+      </label>
+    </div>
+    <div id="replaceWarn" class="small" style="color:var(--warn)" hidden></div>
+    <div id="sheetRow" class="field" hidden>
+      <label for="sheetSelect" class="small">Sheet</label>
+      <select id="sheetSelect"></select>
+    </div>
+    <div id="loadError" class="small" style="color:var(--warn)" hidden></div>
+  </div>
+
+  <div class="card">
+    <span class="label">2 · Go through plants by</span>
+    <select id="idSelect" aria-label="Column to iterate through"></select>
+    <span class="muted small">Each row is one stop. This value is shown big while you score.</span>
+  </div>
+
+  <div class="card">
+    <span class="label">3 · Also show while scoring</span>
+    <div id="contextChips" class="chips"></div>
+  </div>
+
+  <div class="card">
+    <span class="label">4 · What are you measuring?</span>
+    <div id="params" style="display:flex;flex-direction:column;gap:8px;"></div>
+    <datalist id="headerList"></datalist>
+    <div class="row">
+      <button id="addParam" class="ghost">+ Add another column</button>
+    </div>
+    <label class="row small" style="gap:10px;">
+      <input id="recordTime" type="checkbox"> Add a time stamp column (scored_at)
+    </label>
+    <span class="muted small">Using a name that already exists in the sheet fills that column and keeps its current values.</span>
+  </div>
+
+  <div id="setupError" class="small" style="color:var(--warn)" hidden></div>
+  <button id="startBtn" class="primary" style="min-height:56px;font-size:1.1rem;">Start scoring</button>
+
+  <div class="card">
+    <span class="label">Session</span>
+    <span class="muted small">Values are saved on this phone as you type, so you can close the page and come back. Export when you are done.</span>
+    <div class="row">
+      <button id="setupOverview">Overview &amp; export</button>
+      <button id="clearBtn">Clear entered values</button>
+    </div>
+    <div id="clearConfirm" class="confirm" hidden>
+      <span>Delete all <b id="clearCount">0</b> entered values? This cannot be undone.</span>
+      <div class="row">
+        <button id="clearYes" class="primary">Delete values</button>
+        <button id="clearNo">Keep them</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SCORE ============ -->
+<section id="score" class="wrap" hidden>
+  <div class="topbar">
+    <div class="row" style="justify-content:space-between;flex-wrap:nowrap;">
+      <button id="toSetup" class="ghost">Setup</button>
+      <span id="progressText" class="mono small" style="font-weight:700;"></span>
+      <button id="toOverview" class="ghost">Overview</button>
+    </div>
+    <div class="bar"><i id="progressBar"></i></div>
+  </div>
+
+  <form id="jumpForm" class="row" style="flex-wrap:nowrap;">
+    <input id="jumpInput" type="search" placeholder="Jump to ID…" aria-label="Jump to ID" autocomplete="off" enterkeyhint="go">
+    <button type="submit" style="flex:none;">Go</button>
+  </form>
+  <div id="jumpMsg" class="small" style="color:var(--warn)" hidden></div>
+
+  <div class="card" style="gap:14px;">
+    <div class="row" style="justify-content:space-between;">
+      <span id="idLabel" class="label"></span>
+      <span id="rowStatus" class="status-pill"></span>
+    </div>
+    <div id="plantId" class="plant-id"></div>
+    <dl id="context" class="context"></dl>
+  </div>
+
+  <form id="entryForm" class="card" autocomplete="off">
+    <div id="fields" style="display:flex;flex-direction:column;gap:14px;"></div>
+    <div class="nav">
+      <button type="button" id="prevBtn" aria-label="Previous plant">← Prev</button>
+      <button type="button" id="naBtn" title="Fill empty fields with NA">NA</button>
+      <button type="submit" id="nextBtn" class="primary">Next →</button>
+    </div>
+    <div class="row" style="justify-content:space-between;">
+      <button type="button" id="nextEmptyBtn" class="ghost small">Next unscored</button>
+      <span id="saveState" class="muted small">Saved on this phone</span>
+    </div>
+  </form>
+</section>
+
+<!-- ============ OVERVIEW ============ -->
+<section id="overview" class="wrap" hidden>
+  <header class="row" style="justify-content:space-between;">
+    <button id="ovBack" class="ghost">← Back</button>
+    <h1>Overview</h1>
+    <span style="width:64px"></span>
+  </header>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between;">
+      <span id="ovSummary" style="font-weight:700;"></span>
+      <label class="row small" style="gap:8px;"><input id="onlyMissing" type="checkbox"> Only unscored</label>
+    </div>
+    <div class="bar"><i id="ovBar"></i></div>
+  </div>
+
+  <div class="table-wrap"><table id="ovTable"></table></div>
+
+  <div class="card">
+    <span class="label">Export</span>
+    <span class="muted small">Your original columns plus the measured ones, one row per plant.</span>
+    <div class="row">
+      <button id="saveXlsx" class="primary">Save .xlsx</button>
+      <button id="saveCsv">Save .csv</button>
+      <button id="copyTsv">Copy for Excel</button>
+    </div>
+    <div id="exportMsg" class="small muted" hidden></div>
+    <textarea id="copyFallback" hidden readonly aria-label="Table as text"></textarea>
+  </div>
+</section>
+
+<div id="toast" class="toast" hidden role="status"></div>
+
+<script>
+(() => {
+  const STORE_KEY = 'chamber-scoring-v1';
+  const $ = id => document.getElementById(id);
+
+  // ---------- example data (shown until a real file is loaded) ----------
+  function exampleSession() {
+    const genos = ['Col-0', 'pif4-2', 'phyB-9', 'Col-0', 'pif4-2', 'phyB-9'];
+    const headers = ['plant_id', 'genotype', 'treatment', 'tray', 'position', 'rosette_diam_mm'];
+    const rows = [];
+    for (let i = 0; i < 24; i++) {
+      const tray = i < 12 ? 'T1' : 'T2';
+      rows.push([
+        'P' + String(i + 1).padStart(3, '0'),
+        genos[i % 6],
+        i < 12 ? '22 °C' : '28 °C',
+        tray,
+        String.fromCharCode(65 + Math.floor((i % 12) / 4)) + ((i % 4) + 1),
+        ''
+      ]);
+    }
+    return {
+      example: true, fileName: 'example_plants.xlsx', sheetName: 'Sheet1', delim: ',',
+      headers, rows, idCol: 0, contextCols: [1, 2, 4],
+      params: [{ name: 'rosette_diam_mm', type: 'number' }, { name: 'bolted', type: 'text' }],
+      values: { 0: { rosette_diam_mm: '42.5', bolted: 'no' }, 1: { rosette_diam_mm: '38', bolted: 'no' }, 2: { rosette_diam_mm: '51,2', bolted: 'yes' } },
+      times: {}, recordTime: false, pos: 3
+    };
+  }
+
+  // ---------- state & persistence ----------
+  let S = null;
+  let workbook = null;           // kept in memory only, for switching sheets right after loading
+  let saveTimer = null;
+
+  function load() {
+    try {
+      const raw = localStorage.getItem(STORE_KEY);
+      if (raw) { const s = JSON.parse(raw); if (s && Array.isArray(s.rows)) return s; }
+    } catch (e) {}
+    return exampleSession();
+  }
+  function saveNow() {
+    clearTimeout(saveTimer); saveTimer = null;
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify(S));
+      $('saveState').textContent = 'Saved on this phone';
+      $('saveState').style.color = '';
+    } catch (e) {
+      $('saveState').textContent = 'Not saved: browser storage is off. Export before closing.';
+      $('saveState').style.color = 'var(--warn)';
+    }
+  }
+  function save() { clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 300); }
+  window.addEventListener('pagehide', () => { if (saveTimer) saveNow(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden && saveTimer) saveNow(); });
+
+  // ---------- helpers ----------
+  const str = v => v == null ? '' : String(v);
+  function cellText(v) {
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    return str(v);
+  }
+  function toast(msg) {
+    const t = $('toast'); t.textContent = msg; t.hidden = false;
+    clearTimeout(toast._t); toast._t = setTimeout(() => { t.hidden = true; }, 2200);
+  }
+  function show(screen) {
+    for (const id of ['setup', 'score', 'overview']) $(id).hidden = id !== screen;
+    window.scrollTo(0, 0);
+    if (screen === 'score') requestWakeLock();
+  }
+  function paramIndex(name) { return S.headers.indexOf(name); }
+  function getVal(r, p) {
+    const v = S.values[r] && S.values[r][p.name];
+    if (v != null) return v;
+    const i = paramIndex(p.name);
+    return i >= 0 ? cellText(S.rows[r][i]) : '';
+  }
+  function setVal(r, p, v) {
+    (S.values[r] ||= {})[p.name] = v;
+    if (S.recordTime) S.times[r] = new Date().toISOString();
+    save();
+  }
+  const isNA = v => /^(na|n\/a|nan|-)$/i.test(v.trim());
+  function parseNum(v) {
+    const t = v.trim().replace(/\s/g, '').replace(',', '.');
+    if (t === '' || !/^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(t)) return null;
+    return Number(t);
+  }
+  function rowDone(r) { return S.params.length > 0 && S.params.every(p => getVal(r, p).trim() !== ''); }
+  function countDone() { let n = 0; for (let r = 0; r < S.rows.length; r++) if (rowDone(r)) n++; return n; }
+  function countEntered() { let n = 0; for (const k in S.values) for (const p in S.values[k]) if (str(S.values[k][p]).trim() !== '') n++; return n; }
+  function idOf(r) { return cellText(S.rows[r][S.idCol]) || '(row ' + (r + 2) + ')'; }
+
+  // ---------- file loading ----------
+  function parseDelimited(text) {
+    const first = text.split(/\r?\n/, 1)[0];
+    const cands = ['\t', ';', ','];
+    let delim = ',', best = -1;
+    for (const d of cands) { const n = first.split(d).length; if (n > best) { best = n; delim = d; } }
+    const rows = []; let row = [], cell = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) {
+        if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+        else cell += c;
+      } else if (c === '"' && cell === '') q = true;
+      else if (c === delim) { row.push(cell); cell = ''; }
+      else if (c === '\n' || c === '\r') {
+        if (c === '\r' && text[i + 1] === '\n') i++;
+        row.push(cell); rows.push(row); row = []; cell = '';
+      } else cell += c;
+    }
+    if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+    return { aoa: rows, delim };
+  }
+
+  function aoaToTable(aoa) {
+    const clean = aoa.filter(r => r.some(c => str(c).trim() !== ''));
+    if (clean.length < 2) throw new Error('The sheet needs a header row and at least one plant row.');
+    const width = Math.max(...clean.map(r => r.length));
+    const headers = [];
+    for (let i = 0; i < width; i++) {
+      let h = str(clean[0][i]).trim() || 'column_' + (i + 1);
+      while (headers.includes(h)) h += '_';
+      headers.push(h);
+    }
+    const rows = clean.slice(1).map(r => {
+      const out = [];
+      for (let i = 0; i < width; i++) out.push(r[i] instanceof Date ? cellText(r[i]) : (r[i] ?? ''));
+      return out;
+    });
+    return { headers, rows };
+  }
+
+  function newSessionFrom(name, sheetName, table, delim) {
+    const idCol = Math.max(0, table.headers.findIndex(h => /(^|_|\s)id$|^id|plant|plate|pot|sample/i.test(h)));
+    const keepParams = S && !S.example ? S.params.filter(p => p.name.trim()) : [];
+    S = {
+      example: false, fileName: name, sheetName, delim: delim || ',',
+      headers: table.headers, rows: table.rows, idCol,
+      contextCols: table.headers.map((_, i) => i).filter(i => i !== idCol).slice(0, 3),
+      params: keepParams.length ? keepParams : [{ name: '', type: 'number' }],
+      values: {}, times: {}, recordTime: S ? !!S.recordTime : false, pos: 0
+    };
+    saveNow();
+  }
+
+  $('fileInput').addEventListener('change', async e => {
+    const f = e.target.files[0]; e.target.value = '';
+    if (!f) return;
+    $('loadError').hidden = true;
+    try {
+      if (/\.(csv|tsv|txt)$/i.test(f.name)) {
+        const { aoa, delim } = parseDelimited(await f.text());
+        workbook = null;
+        newSessionFrom(f.name, '', aoaToTable(aoa), delim);
+      } else {
+        if (!window.XLSX) throw new Error('The Excel reader did not load (vendor/xlsx.full.min.js is missing). Save the sheet as .csv and try again.');
+        workbook = XLSX.read(await f.arrayBuffer(), { type: 'array', cellDates: true });
+        const sheet = workbook.SheetNames.find(n => sheetAoa(n).filter(r => r.some(c => str(c).trim())).length > 1) || workbook.SheetNames[0];
+        newSessionFrom(f.name, sheet, aoaToTable(sheetAoa(sheet)));
+      }
+      renderSetup();
+      toast(S.rows.length + ' rows loaded');
+    } catch (err) {
+      $('loadError').textContent = 'Could not read ' + f.name + '. ' + (err.message || '');
+      $('loadError').hidden = false;
+    }
+  });
+
+  function sheetAoa(name) {
+    return XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, defval: '', raw: true, blankrows: false });
+  }
+
+  $('sheetSelect').addEventListener('change', e => {
+    try {
+      newSessionFrom(S.fileName, e.target.value, aoaToTable(sheetAoa(e.target.value)));
+      $('loadError').hidden = true;
+    } catch (err) {
+      $('loadError').textContent = err.message; $('loadError').hidden = false;
+    }
+    renderSetup();
+  });
+
+  // ---------- setup screen ----------
+  function renderSetup() {
+    $('exampleBanner').hidden = !S.example;
+    $('fileName').textContent = S.fileName;
+    $('fileMeta').textContent = S.rows.length + ' rows · ' + S.headers.length + ' columns' + (S.sheetName ? ' · sheet "' + S.sheetName + '"' : '');
+    const entered = countEntered();
+    $('replaceWarn').hidden = S.example || entered === 0;
+    $('replaceWarn').textContent = 'Loading another file replaces the ' + entered + ' values entered so far. Export them first.';
+    $('resumeBtn').hidden = !(S.params.some(p => p.name.trim()) && (entered > 0 || S.pos > 0));
+
+    const sr = $('sheetRow'), ss = $('sheetSelect');
+    sr.hidden = !(workbook && workbook.SheetNames.length > 1);
+    if (!sr.hidden) {
+      ss.replaceChildren(...workbook.SheetNames.map(n => new Option(n, n, false, n === S.sheetName)));
+    }
+
+    const idSel = $('idSelect');
+    idSel.replaceChildren(...S.headers.map((h, i) => new Option(h + '  (e.g. ' + (cellText(S.rows[0]?.[i]) || '—') + ')', i, false, i === S.idCol)));
+
+    const chips = $('contextChips'); chips.replaceChildren();
+    S.headers.forEach((h, i) => {
+      if (i === S.idCol || S.params.some(p => p.name === h)) return;
+      const lab = document.createElement('label'); lab.className = 'chip';
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = S.contextCols.includes(i);
+      cb.addEventListener('change', () => {
+        S.contextCols = cb.checked ? [...S.contextCols, i].sort((a, b) => a - b) : S.contextCols.filter(c => c !== i);
+        save();
+      });
+      lab.append(cb, document.createTextNode(h));
+      chips.append(lab);
+    });
+    if (!chips.children.length) chips.textContent = 'No other columns.';
+
+    $('headerList').replaceChildren(...S.headers.map(h => new Option(h)));
+    renderParams();
+    $('recordTime').checked = !!S.recordTime;
+    $('clearConfirm').hidden = true;
+  }
+
+  function renderParams() {
+    const box = $('params'); box.replaceChildren();
+    S.params.forEach((p, idx) => {
+      const row = document.createElement('div'); row.className = 'param';
+      const name = document.createElement('input');
+      name.id = 'param-name-' + idx; name.value = p.name; name.placeholder = 'Column name, e.g. leaf_count';
+      name.setAttribute('list', 'headerList'); name.setAttribute('aria-label', 'Column name');
+      name.autocapitalize = 'off'; name.spellcheck = false;
+      name.addEventListener('input', () => { p.name = name.value.trim(); save(); });
+      name.addEventListener('change', () => renderSetup());
+      const type = document.createElement('select');
+      type.id = 'param-type-' + idx; type.setAttribute('aria-label', 'Value type');
+      type.append(new Option('Number', 'number', false, p.type === 'number'), new Option('Text', 'text', false, p.type === 'text'));
+      type.addEventListener('change', () => { p.type = type.value; save(); });
+      const del = document.createElement('button');
+      del.className = 'icon-btn'; del.textContent = '✕'; del.setAttribute('aria-label', 'Remove ' + (p.name || 'column'));
+      del.disabled = S.params.length === 1;
+      del.addEventListener('click', () => { S.params.splice(idx, 1); save(); renderSetup(); });
+      row.append(name, type, del);
+      box.append(row);
+    });
+  }
+
+  $('idSelect').addEventListener('change', e => {
+    S.idCol = Number(e.target.value);
+    S.contextCols = S.contextCols.filter(c => c !== S.idCol);
+    save(); renderSetup();
+  });
+  $('addParam').addEventListener('click', () => {
+    S.params.push({ name: '', type: 'number' }); save(); renderParams();
+    $('param-name-' + (S.params.length - 1)).focus();
+  });
+  $('recordTime').addEventListener('change', e => { S.recordTime = e.target.checked; save(); });
+
+  function validateSetup() {
+    const names = S.params.map(p => p.name.trim());
+    if (names.some(n => !n)) return 'Give every measured column a name.';
+    if (new Set(names).size !== names.length) return 'Two measured columns have the same name.';
+    if (names.includes(S.headers[S.idCol])) return 'A measured column cannot be the column you go through.';
+    return '';
+  }
+  $('startBtn').addEventListener('click', () => {
+    const err = validateSetup();
+    $('setupError').textContent = err; $('setupError').hidden = !err;
+    if (err) return;
+    S.params.forEach(p => p.name = p.name.trim());
+    S.contextCols = S.contextCols.filter(c => !S.params.some(p => p.name === S.headers[c]));
+    saveNow();
+    if (S.pos >= S.rows.length) S.pos = 0;
+    show('score'); renderScore(true);
+  });
+  $('resumeBtn').addEventListener('click', () => $('startBtn').click());
+  $('setupOverview').addEventListener('click', () => {
+    const err = validateSetup();
+    $('setupError').textContent = err; $('setupError').hidden = !err;
+    if (!err) openOverview('setup');
+  });
+  $('clearBtn').addEventListener('click', () => { $('clearCount').textContent = countEntered(); $('clearConfirm').hidden = false; });
+  $('clearNo').addEventListener('click', () => { $('clearConfirm').hidden = true; });
+  $('clearYes').addEventListener('click', () => {
+    S.values = {}; S.times = {}; S.pos = 0; saveNow(); renderSetup(); toast('Values cleared');
+  });
+
+  // ---------- scoring screen ----------
+  function renderScore(focus) {
+    const r = S.pos, n = S.rows.length, done = countDone();
+    $('progressText').textContent = (r + 1) + ' / ' + n + '  ·  ' + done + ' done';
+    $('progressBar').style.width = (100 * done / n) + '%';
+    $('idLabel').textContent = S.headers[S.idCol];
+    $('plantId').textContent = idOf(r);
+    const st = $('rowStatus'), d = rowDone(r);
+    st.textContent = d ? '✓ Scored' : 'Not scored';
+    st.classList.toggle('done', d);
+
+    const ctx = $('context'); ctx.replaceChildren();
+    for (const c of S.contextCols) {
+      const dt = document.createElement('dt'); dt.textContent = S.headers[c];
+      const dd = document.createElement('dd'); dd.textContent = cellText(S.rows[r][c]) || '—';
+      ctx.append(dt, dd);
+    }
+    ctx.hidden = !S.contextCols.length;
+
+    const box = $('fields'); box.replaceChildren();
+    S.params.forEach((p, i) => {
+      const f = document.createElement('div'); f.className = 'field';
+      const lab = document.createElement('label'); lab.htmlFor = 'val-' + i; lab.textContent = p.name;
+      const inp = document.createElement('input');
+      inp.id = 'val-' + i; inp.value = getVal(r, p);
+      inp.autocomplete = 'off'; inp.spellcheck = false; inp.autocapitalize = 'off';
+      if (p.type === 'number') inp.inputMode = 'decimal';
+      inp.enterKeyHint = i === S.params.length - 1 ? 'next' : 'next';
+      const hint = document.createElement('div'); hint.className = 'hint';
+      const check = () => {
+        const v = inp.value;
+        const bad = p.type === 'number' && v.trim() !== '' && !isNA(v) && parseNum(v) === null;
+        f.classList.toggle('bad', bad);
+        hint.textContent = bad ? 'Not a number. It will be exported as text.' : '';
+      };
+      inp.addEventListener('input', () => { setVal(S.pos, p, inp.value); check(); updateStatus(); });
+      inp.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const next = $('val-' + (i + 1));
+          if (next) { next.focus(); next.select(); } else go(1);
+        }
+      });
+      check();
+      f.append(lab, inp, hint);
+      box.append(f);
+    });
+    $('prevBtn').disabled = r === 0;
+    $('nextBtn').textContent = r === n - 1 ? 'Finish →' : 'Next →';
+    $('jumpMsg').hidden = true;
+    if (focus) {
+      const first = S.params.findIndex(p => getVal(r, p).trim() === '');
+      const el = $('val-' + Math.max(0, first));
+      if (el) { el.focus({ preventScroll: true }); el.select(); }
+    }
+  }
+  function updateStatus() {
+    const d = rowDone(S.pos), st = $('rowStatus');
+    st.textContent = d ? '✓ Scored' : 'Not scored'; st.classList.toggle('done', d);
+    const done = countDone();
+    $('progressText').textContent = (S.pos + 1) + ' / ' + S.rows.length + '  ·  ' + done + ' done';
+    $('progressBar').style.width = (100 * done / S.rows.length) + '%';
+  }
+  function go(step) {
+    const n = S.pos + step;
+    if (n >= S.rows.length) { saveNow(); openOverview('score'); toast('End of the list'); return; }
+    if (n < 0) return;
+    S.pos = n; save(); renderScore(true);
+  }
+  function nextEmpty() {
+    const n = S.rows.length;
+    for (let k = 1; k <= n; k++) {
+      const r = (S.pos + k) % n;
+      if (!rowDone(r)) { S.pos = r; save(); show('score'); renderScore(true); return true; }
+    }
+    toast('Every plant is scored');
+    return false;
+  }
+
+  // Keep the keyboard open: stop the buttons from stealing focus from the input.
+  for (const id of ['prevBtn', 'naBtn', 'nextBtn', 'nextEmptyBtn']) $(id).addEventListener('mousedown', e => e.preventDefault());
+  $('entryForm').addEventListener('submit', e => { e.preventDefault(); go(1); });
+  $('prevBtn').addEventListener('click', () => go(-1));
+  $('nextEmptyBtn').addEventListener('click', nextEmpty);
+  $('naBtn').addEventListener('click', () => {
+    let filled = 0;
+    S.params.forEach((p, i) => {
+      if (getVal(S.pos, p).trim() === '') { setVal(S.pos, p, 'NA'); $('val-' + i).value = 'NA'; filled++; }
+    });
+    if (!filled) {
+      const el = document.activeElement;
+      const i = el && el.id && el.id.startsWith('val-') ? Number(el.id.slice(4)) : 0;
+      setVal(S.pos, S.params[i], 'NA'); $('val-' + i).value = 'NA';
+    }
+    updateStatus();
+  });
+  $('toSetup').addEventListener('click', () => { saveNow(); renderSetup(); show('setup'); });
+  $('toOverview').addEventListener('click', () => { saveNow(); openOverview('score'); });
+
+  $('jumpForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const q = $('jumpInput').value.trim().toLowerCase();
+    if (!q) return;
+    const ids = S.rows.map((_, r) => idOf(r).toLowerCase());
+    let r = ids.indexOf(q);
+    if (r < 0) {
+      // allow typing just the number part: "17" finds "P017"
+      const digits = q.replace(/\D/g, '');
+      if (digits) r = ids.findIndex(id => id.replace(/\D/g, '').replace(/^0+/, '') === digits.replace(/^0+/, ''));
+    }
+    if (r < 0) r = ids.findIndex(id => id.includes(q));
+    if (r < 0) { $('jumpMsg').textContent = 'No ' + S.headers[S.idCol] + ' matches "' + $('jumpInput').value + '".'; $('jumpMsg').hidden = false; return; }
+    $('jumpInput').value = ''; $('jumpInput').blur();
+    S.pos = r; save(); renderScore(true);
+  });
+
+  // ---------- overview ----------
+  let ovFrom = 'score';
+  function openOverview(from) { ovFrom = from; renderOverview(); show('overview'); }
+  $('ovBack').addEventListener('click', () => {
+    if (ovFrom === 'setup') { renderSetup(); show('setup'); } else { show('score'); renderScore(false); }
+  });
+  $('onlyMissing').addEventListener('change', renderOverview);
+
+  function renderOverview() {
+    const n = S.rows.length, done = countDone();
+    $('ovSummary').textContent = done + ' of ' + n + ' scored';
+    $('ovBar').style.width = (100 * done / n) + '%';
+    const only = $('onlyMissing').checked;
+    const t = $('ovTable'); t.replaceChildren();
+    const thead = t.createTHead().insertRow();
+    for (const h of [S.headers[S.idCol], ...S.params.map(p => p.name)]) {
+      const th = document.createElement('th'); th.textContent = h; thead.append(th);
+    }
+    const tb = t.createTBody();
+    for (let r = 0; r < n; r++) {
+      if (only && rowDone(r)) continue;
+      const tr = tb.insertRow(); tr.tabIndex = 0;
+      if (r === S.pos) tr.className = 'current';
+      const id = tr.insertCell(); id.className = 'mono'; id.textContent = idOf(r);
+      for (const p of S.params) {
+        const v = getVal(r, p), td = tr.insertCell();
+        td.className = 'mono' + (v.trim() ? '' : ' empty');
+        td.textContent = v.trim() ? v : '—';
+      }
+      const open = () => { S.pos = r; save(); show('score'); renderScore(true); };
+      tr.addEventListener('click', open);
+      tr.addEventListener('keydown', e => { if (e.key === 'Enter') open(); });
+    }
+    if (!tb.rows.length) {
+      const td = tb.insertRow().insertCell(); td.colSpan = S.params.length + 1; td.className = 'empty';
+      td.textContent = 'Every plant is scored.';
+    }
+    $('exportMsg').hidden = true; $('copyFallback').hidden = true;
+  }
+
+  // ---------- export ----------
+  function exportAoa() {
+    const headers = S.headers.slice();
+    const colOf = {};
+    for (const p of S.params) {
+      let i = headers.indexOf(p.name);
+      if (i < 0) { headers.push(p.name); i = headers.length - 1; }
+      colOf[p.name] = i;
+    }
+    let tCol = -1;
+    if (S.recordTime) { tCol = headers.indexOf('scored_at'); if (tCol < 0) { headers.push('scored_at'); tCol = headers.length - 1; } }
+    const out = [headers];
+    S.rows.forEach((row, r) => {
+      const line = headers.map((_, i) => row[i] ?? '');
+      for (const p of S.params) {
+        const v = getVal(r, p);
+        let cell = v;
+        if (p.type === 'number' && v.trim() !== '') {
+          if (isNA(v)) cell = 'NA';
+          else { const num = parseNum(v); cell = num === null ? v : num; }
+        }
+        line[colOf[p.name]] = cell;
+      }
+      if (tCol >= 0) line[tCol] = S.times[r] ? new Date(S.times[r]).toLocaleString('sv-SE') : '';
+      out.push(line);
+    });
+    return out;
+  }
+  function baseName() {
+    const b = S.fileName.replace(/\.[^.]+$/, '');
+    const d = new Date();
+    const stamp = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    return b + '_scored_' + stamp;
+  }
+  function toDelimited(aoa, delim) {
+    return aoa.map(r => r.map(c => {
+      let s = str(c);
+      if (delim === ';' && typeof c === 'number') s = s.replace('.', ',');
+      return /["\n\r]/.test(s) || s.includes(delim) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }).join(delim)).join('\r\n');
+  }
+  function exportMsg(text, warn) {
+    const m = $('exportMsg'); m.textContent = text; m.hidden = false;
+    m.style.color = warn ? 'var(--warn)' : '';
+  }
+
+  function offerFile(filename, data, type) {
+    try {
+      const blob = data instanceof Blob ? data : new Blob([data], { type });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      exportMsg('Saved ' + filename + ' to your downloads.');
+    } catch (err) {
+      exportMsg('Could not save the file. Try "Copy for Excel".', true);
+    }
+  }
+
+  $('saveXlsx').addEventListener('click', () => {
+    if (!window.XLSX) { exportMsg('The Excel writer did not load (vendor/xlsx.full.min.js is missing). Use .csv or "Copy for Excel".', true); return; }
+    const ws = XLSX.utils.aoa_to_sheet(exportAoa());
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, (S.sheetName || 'scores').slice(0, 31));
+    const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    offerFile(baseName() + '.xlsx', new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  });
+  $('saveCsv').addEventListener('click', () => {
+    offerFile(baseName() + '.csv', '﻿' + toDelimited(exportAoa(), S.delim === ';' ? ';' : ','), 'text/csv;charset=utf-8');
+  });
+  $('copyTsv').addEventListener('click', () => {
+    const text = toDelimited(exportAoa(), '\t');
+    const fallback = () => {
+      const ta = $('copyFallback'); ta.value = text; ta.hidden = false; ta.focus(); ta.select();
+      exportMsg('Copy did not work here. The table is selected below: copy it by hand.', true);
+    };
+    try {
+      navigator.clipboard.writeText(text).then(() => exportMsg('Copied ' + S.rows.length + ' rows. Paste into Excel.'), fallback);
+    } catch (e) { fallback(); }
+  });
+
+  // ---------- screen wake lock ----------
+  let wakeLock = null;
+  async function requestWakeLock() {
+    try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch (e) {}
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('score').hidden) requestWakeLock(); });
+
+  // ---------- offline support ----------
+  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+
+  // ---------- boot ----------
+  S = load();
+  renderSetup();
+  if (!S.example && S.params.every(p => p.name.trim()) && (countEntered() > 0 || S.pos > 0)) { show('score'); renderScore(false); }
+})();
+</script>
+</body>
+</html>
